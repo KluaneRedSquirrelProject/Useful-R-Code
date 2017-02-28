@@ -1,0 +1,128 @@
+#CODE FROM VARIOUS PLACES#
+#therefore nitt, burning etc not consistent. Not important.
+
+
+
+#repeatability####
+
+#simple model
+prior = list(R = list(V = diag(1), n = 0.2),
+	     G = list(G1 = list(V = diag(1), n = 0.2)))
+
+model<-MCMCglmm(trait~fixed,random=~ID,rcov=~units,
+                  family="whatever",data=data,prior=prior,nitt=50000,burnin=1000,thin=10,verbose=F)
+
+ICC <- model$VCV[,1]/ (model$VCV[,1]+model$VCV[,2]) #repeatability for each "draw" of the model. Could perhaps limit to only the last 500 or so?
+posterior.mode(ICC)
+HPDinterval(ICC)
+
+#bivariate####
+prior.bi = list(R = list(V = diag(2), nu = 0.2),
+               G = list(G1 = list(V = diag(2), nu = 0.5,alpha.mu=c(0,0),alpha.V=diag(2)*1000)))
+
+model.bi<-MCMCglmm(fixed=cbind(trait1, trait2)~trait+trait:(fixed), #note trait1 &2 are your variables but leave 'trait+trait:' as is.
+                      random=~us(trait):tag,rcov=~us(trait):units,
+                      family=c("whatever1","whatever2"),prior=prior.bi,data=data,
+                      nitt=200000,thin=10,burnin=10000,verbose=F)
+
+# Among-individual correlation
+Aind.corr<-model.bi$VCV[,2]/(model.bi[,1]*model.bi[,4])^.5
+posterior.mode(Aind.corr)
+HPDinterval(Aind.corr)
+
+#Within-individual correlation
+Wind.corr<-model.bi$VCV[,6]/(model.bi$VCV[,5]*model.bi$VCV[,8])^.5 
+posterior.mode(Wind.corr)
+HPDinterval(Wind.corr)
+
+#hopefully those numbers pick out the right bits, essentially its 'covar / sqrt(var1*var2)'
+#using the G matrix for the among-ind corr and the R matrix for the within-ind corr
+
+#setting an offset in a model####
+
+prior.off = list(B= list (mu = matrix(c(0,1,0,0,0,0,0,0,0,0),10),V = diag(10)*(10))) #set slope of relationship between trait and offset to 1
+#intercept is first element of fixed effects, so second (but first term in model formula) should be offset
+#add R and G as normal
+                  
+
+diag(prior.off$B$V)[2]<-1e-9 #make variance of offset very small
+
+model.off<-MCMCglmm(trait~log(offset) +fixed,
+                    random=~ID, family="poisson",prior=prior.off, 
+                    data=data,nitt=10000,thin=10,burnin=5000,verbose=F)
+
+
+
+#random regression
+prior.rr = list(R = list(V = 1, n = 0.2),
+               G = list(G1 = list(V = diag(2), n = 0.002, alpha.mu=c(1,0.02), alpha.V=diag(2)*1000))
+
+
+model.rr<-MCMCglmm(trait~fixed,
+                    random=~us(1+slope.term):ID, family="whatever",prior=prior.rr, 
+                    data=data,nitt=10000,thin=10,burnin=5000,verbose=F)
+
+#Intercept-slope correlation
+IS.corr<- model.rr$VCV[,2] / ((model.rr$VCV[,1] * model.rr$VCV[,4])^0.5)
+posterior.mode(IS.corr)
+HPDinterval(IS.corr)
+
+#Across environment correlations (see Brommer 2013 doi: 10.1007/s00265-013-1603-9)
+
+Cov.mat<-matrix(c(posterior.mode(model.rr$VCV)[1:4]),2,2)
+
+#Now, the vector phi has three rows and two columns
+
+phi=matrix(c(1,1,1,-10,0,10),3,2)
+#going to look at correlations at 3 points:
+# the mean trait (0)
+#10 below the mean (-10)
+#10 above the mean (10)
+
+P <- phi%*%Cov.mat%*%t(phi)
+P#covariances between time points
+cov2cor(P)
+
+#same paper, change in among-individual (or whatever the random effect is) across slope variable
+
+phi2=matrix(c(rep(1,21),seq(-10,10,by=1)),21,2)#chose appropriate numbers to get range along your slope variable
+P2 <- phi2%*%Cov.mat%*%t(phi2)
+plot(phi2[,2],diag(P2),type="l",xlab=list("E",cex=1.5), ylab=list("Individual Variance",cex=1.5))
+
+
+
+#R2
+
+Following Nakagawa & Schielzeth 2013 (doi: 10.1111/j.2041-210x.2012.00261.x)
+
+#Variance accounted for by fixed effects
+VarF<-var(posterior.mode(model$Sol[,2]) * model$X[,2]+ 
+          posterior.mode(model$Sol[,3]) * model$X[,3]+
+          posterior.mode(model$Sol[,4]) * model$X[,4])#and so on for your fixed effects
+
+#Variance from random effects
+VarR <- posterior.mode(model$VCV)[1] #could have mutiple e.g. +posterior.mode(model$VCV)[2]+posterior.mode(model$VCV)[3]
+
+
+#OR Mod for Random slope models, takes mean among-individual variance across the slope variable (mode might be more appropriate, but thats a simple edit)#
+#see Johnson 2014 (doi: 10.1111/2041-210X.12225) I've adapted the code to work for MCMCglmm, so it could be wrong...
+Cov.mat<-matrix(c(posterior.mode(model.rr$VCV)[1:4]),2,2)
+n <- nrow(model$X) 
+Z <-model$X[,c(1,2)]#1st column is a vector of 1s corresponding to the random intercept, 
+#the 2nd is the slope variable 
+VarR.rr<-sum(diag(Z %*% Cov.mat %*% t(Z))/n) 
+
+#'could' have both a random intercept and a different random slope making up for fixed effects. Then:
+VarR2<-sum(diag(Z %*% Cov.mat %*% t(Z))/n) + posterior.mode(model.rr2$VCV)[5]
+
+#Variance in error/residual term
+VarE<-posterior.mode(model$VCV)[2] #will typically be last element of model$VCV
+
+#distribution specific variance. Differs depending on model type (none for Gaussian) this is for a Poisson model. See Nakagawa & Schielzeth 2010 (doi: 10.1111/j.1469-185X.2010.00141.x)
+VarD<-log(1 + 1/exp(posterior.mode(act.lh.ON$Sol[,1])))
+
+#marginal R2
+VarF / (VarF.b + VarR + VarE + VarD) 
+
+#conditional R2
+(VarF.b + VarR) / (VarF.b + VarR + VarE + VarD) 
