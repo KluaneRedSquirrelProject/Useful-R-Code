@@ -53,7 +53,7 @@ model.off<-MCMCglmm(trait~log(offset) +fixed,
 
 
 
-#random regression
+#random regression####
 prior.rr = list(R = list(V = 1, n = 0.2),
                G = list(G1 = list(V = diag(2), n = 0.002, alpha.mu=c(1,0.02), alpha.V=diag(2)*1000))
 
@@ -91,7 +91,7 @@ plot(phi2[,2],diag(P2),type="l",xlab=list("E",cex=1.5), ylab=list("Individual Va
 
 
 
-#R2
+#R2####
 
 Following Nakagawa & Schielzeth 2013 (doi: 10.1111/j.2041-210x.2012.00261.x)
 
@@ -126,3 +126,20 @@ VarF / (VarF.b + VarR + VarE + VarD)
 
 #conditional R2
 (VarF.b + VarR) / (VarF.b + VarR + VarE + VarD) 
+
+#Animal model####
+
+#Pedigree is a 3 column data frame of individual IDs, father ID, mother ID. Called "animal" "sire" and "dam" respectively
+
+prior1 <- list(G = list(G1 = list(V = 1, nu = 0.002),
+                        G2 = list(V = 1, nu = 0.002)),
+               R = list(V = 1, nu = 0.002))
+modelA <- MCMCglmm(response ~ fixed, random = ~animal + id, pedigree = ped, #note "animal" is a reserved word
+                     data = data, prior = prior1, verbose=F,		
+                     nitt=150000,burnin=50000,thin=10)
+posterior.mode(modelA$VCV)
+
+herit=modelA$VCV[,1] / (modelA$VCV[,1] + modelA$VCV[,2]+ modelA$VCV[,3])
+
+hist(herit)
+posterior.mode(herit)
